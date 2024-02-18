@@ -26,6 +26,7 @@ fkyaml::node parse_events(std::istream& is)
     std::size_t counts = 0;
 
     fkyaml::node root = fkyaml::node::mapping();
+    fkyaml::node* p_current = &root;
 
     while (true)
     {
@@ -71,7 +72,48 @@ fkyaml::node parse_events(std::istream& is)
         }
         if (std::strncmp(&input[counts], "=VAL", 4) == 0)
         {
-            counts += 4;
+            counts += 5; // "=VAL"(4) + space(1)
+
+            fkyaml::node::node_t type {fkyaml::node::node_t::NULL_OBJECT};
+
+            if (std::strncmp(&input[counts], "<", 1) == 0)
+            {
+                if (std::strncmp(&input[counts], "<tag:yaml.org,2002:seq>", 23) == 0)
+                {
+                    counts += 24; // tag(23) + space(1)
+                    type = fkyaml::node::node_t::SEQUENCE;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:map>", 23) == 0)
+                {
+                    counts += 24; // tag(23) + space(1)
+                    type = fkyaml::node::node_t::MAPPING;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:null>", 24) == 0)
+                {
+                    counts += 25; // tag(24) + space(1)
+                    type = fkyaml::node::node_t::NULL_OBJECT;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:bool>", 24) == 0)
+                {
+                    counts += 25; // tag(24) + space(1)
+                    type = fkyaml::node::node_t::BOOLEAN;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:int>", 23) == 0)
+                {
+                    counts += 24; // tag(23) + space(1)
+                    type = fkyaml::node::node_t::INTEGER;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:float>", 25) == 0)
+                {
+                    counts += 26; // tag(25) + space(1)
+                    type = fkyaml::node::node_t::FLOAT_NUMBER;
+                }
+                else if (std::strncmp(&input[counts], "<tag:yaml.org,2002:str>", 23) == 0)
+                {
+                    counts += 24; // tag(23) + space(1)
+                    type = fkyaml::node::node_t::STRING;
+                }
+            }
 
             // TODO: implement this.
 
