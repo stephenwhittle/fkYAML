@@ -70,6 +70,18 @@ private:
         CLIP,  //!< preserves final line breaks and trailing empty lines indicated by `+`.
     };
 
+    enum class desired_token_t
+    {
+        UNDEFINED,           //!< no desired token type for the next token.
+        SEQUENCE_BEGIN,      //!< the beginning of a sequence (block or flow) is expected.
+        MAPPING_BEGIN,       //!< the beginning of a mapping (block or mapping) is expected.
+        NULL_VALUE,          //!< null value is expected.
+        BOOLEAN_VALUE,       //!< boolean value is expected.
+        INTEGER_VALUE,       //!< integer value is expected.
+        FLOAT_NUMBER_VALUE,  //!< floating point value is expected.
+        STRING_VALUE,        //!< string value is expected.
+    };
+
 public:
     using boolean_type = typename BasicNodeType::boolean_type;
     using integer_type = typename BasicNodeType::integer_type;
@@ -87,288 +99,8 @@ public:
     /// @return lexical_token_t The next lexical token type.
     lexical_token_t get_next_token()
     {
-        skip_white_spaces();
-
-        char_int_type current = m_input_handler.get_current();
-        m_last_token_begin_pos = m_input_handler.get_cur_pos_in_line();
-
-        if (0x00 <= current && current <= 0x7F && isdigit(current))
-        {
-            return m_last_token_type = scan_number();
-        }
-
-        switch (current)
-        {
-        case end_of_input: // end of input buffer
-            return m_last_token_type = lexical_token_t::END_OF_BUFFER;
-        case '?':
-            switch (m_input_handler.get_next())
-            {
-            case ' ':
-                return m_last_token_type = lexical_token_t::EXPLICIT_KEY_PREFIX;
-            default:
-                m_value_buffer = "?";
-                return m_last_token_type = scan_string(false);
-            }
-        case ':': // key separater
-            switch (m_input_handler.get_next())
-            {
-            case ' ':
-                break;
-            case '\r': {
-                char_int_type next = m_input_handler.get_next();
-                if (next == '\n')
-                {
-                    m_input_handler.get_next();
-                }
-                return m_last_token_type = lexical_token_t::MAPPING_BLOCK_PREFIX;
-            }
-            case '\n':
-                m_input_handler.get_next();
-                return m_last_token_type = lexical_token_t::MAPPING_BLOCK_PREFIX;
-            default:
-                emit_error("Half-width spaces or newline codes are required after a key separater(:).");
-            }
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::KEY_SEPARATOR;
-        case ',': // value separater
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::VALUE_SEPARATOR;
-        case '&': { // anchor prefix
-            m_value_buffer.clear();
-            while (true)
-            {
-                char_int_type next = m_input_handler.get_next();
-                if (next == end_of_input || next == '\r' || next == '\n')
-                {
-                    emit_error("An anchor label must be followed by some value.");
-                }
-                if (next == ' ')
-                {
-                    m_input_handler.get_next();
-                    break;
-                }
-                m_value_buffer.push_back(char_traits_type::to_char_type(next));
-            }
-            return m_last_token_type = lexical_token_t::ANCHOR_PREFIX;
-        }
-        case '*': { // alias prefix
-            m_value_buffer.clear();
-            while (true)
-            {
-                char_int_type next = m_input_handler.get_next();
-                if (next == ' ' || next == '\r' || next == '\n' || next == end_of_input)
-                {
-                    if (m_value_buffer.empty())
-                    {
-                        emit_error("An alias prefix must be followed by some anchor name.");
-                    }
-                    m_input_handler.get_next();
-                    break;
-                }
-                m_value_buffer.push_back(char_traits_type::to_char_type(next));
-            }
-            return m_last_token_type = lexical_token_t::ALIAS_PREFIX;
-        }
-        case '#': // comment prefix
-            scan_comment();
-            return m_last_token_type = lexical_token_t::COMMENT_PREFIX;
-        case '%': // directive prefix
-            return m_last_token_type = scan_directive();
-        case '-': {
-            char_int_type next = m_input_handler.get_next();
-            if (next == ' ')
-            {
-                // Move a cursor to the beginning of the next token.
-                m_input_handler.get_next();
-                return m_last_token_type = lexical_token_t::SEQUENCE_BLOCK_PREFIX;
-            }
-
-            m_input_handler.unget();
-            if (std::isdigit(next))
-            {
-                return m_last_token_type = scan_number();
-            }
-
-            char_int_type ret = m_input_handler.get_range(3, m_value_buffer);
-            if (ret != end_of_input)
-            {
-                if (m_value_buffer == "---")
-                {
-                    m_input_handler.get_next();
-                    return m_last_token_type = lexical_token_t::END_OF_DIRECTIVES;
-                }
-
-                m_input_handler.unget_range(2);
-                ret = m_input_handler.get_range(5, m_value_buffer);
-                if (ret != end_of_input)
-                {
-                    try
-                    {
-                        // try convert to the negative infinite value.
-                        m_float_val = from_string(m_value_buffer, type_tag<float_number_type> {});
-                        m_input_handler.get_next();
-                        return m_last_token_type = lexical_token_t::FLOAT_NUMBER_VALUE;
-                    }
-                    catch (const fkyaml::exception& /*unused*/)
-                    {
-                        m_input_handler.unget_range(4);
-                    }
-                }
-            }
-
-            m_input_handler.get_next();
-            m_value_buffer = "-";
-            return m_last_token_type = scan_string(false);
-        }
-        case '[': // sequence flow begin
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::SEQUENCE_FLOW_BEGIN;
-        case ']': // sequence flow end
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::SEQUENCE_FLOW_END;
-        case '{': // mapping flow begin
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::MAPPING_FLOW_BEGIN;
-        case '}': // mapping flow end
-            m_input_handler.get_next();
-            return m_last_token_type = lexical_token_t::MAPPING_FLOW_END;
-        case '@':
-            emit_error("Any token cannot start with at(@). It is a reserved indicator for YAML.");
-        case '`':
-            emit_error("Any token cannot start with grave accent(`). It is a reserved indicator for YAML.");
-        case '\"':
-        case '\'':
-            return m_last_token_type = scan_string();
-        case '~':
-            m_value_buffer = char_traits_type::to_char_type(current);
-            return m_last_token_type = lexical_token_t::NULL_VALUE;
-        case '+':
-            return m_last_token_type = scan_number();
-        case '.': {
-            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
-            if (ret != end_of_input)
-            {
-                try
-                {
-                    // try convert to an infinite/nan value.
-                    m_float_val = from_string(m_value_buffer, type_tag<float_number_type> {});
-                    m_input_handler.get_next();
-                    return m_last_token_type = lexical_token_t::FLOAT_NUMBER_VALUE;
-                }
-                catch (const fkyaml::exception& /*unused*/)
-                {
-                    // revert change in the position to the one before comparison above.
-                    m_input_handler.unget_range(3);
-                    return m_last_token_type = scan_string();
-                }
-            }
-
-            ret = m_input_handler.get_range(3, m_value_buffer);
-            if (ret != end_of_input)
-            {
-                if (m_value_buffer == "...")
-                {
-                    m_input_handler.get_next();
-                    return m_last_token_type = lexical_token_t::END_OF_DOCUMENT;
-                }
-
-                // revert change in the position to the one before comparison above.
-                m_input_handler.unget_range(2);
-            }
-
-            return m_last_token_type = scan_string();
-        }
-        case '|': {
-            chomping_indicator_t chomp_type = chomping_indicator_t::KEEP;
-            std::size_t indent = 0;
-            get_block_style_metadata(chomp_type, indent);
-            return m_last_token_type =
-                       scan_block_style_string_token(block_style_indicator_t::LITERAL, chomp_type, indent);
-        }
-        case '>': {
-            chomping_indicator_t chomp_type = chomping_indicator_t::KEEP;
-            std::size_t indent = 0;
-            get_block_style_metadata(chomp_type, indent);
-            return m_last_token_type =
-                       scan_block_style_string_token(block_style_indicator_t::FOLDED, chomp_type, indent);
-        }
-        case 'F':
-        case 'f': {
-            // YAML specifies that only these words represent the boolean value `false`.
-            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
-            char_int_type ret = m_input_handler.get_range(5, m_value_buffer);
-            if (ret == end_of_input)
-            {
-                return m_last_token_type = scan_string();
-            }
-
-            try
-            {
-                // try convert to a boolean false value.
-                m_boolean_val = from_string(m_value_buffer, type_tag<boolean_type> {});
-                m_input_handler.get_next();
-                return m_last_token_type = lexical_token_t::BOOLEAN_VALUE;
-            }
-            catch (const fkyaml::exception& /*unused*/)
-            {
-                // revert change in the position to the one before comparison above.
-                m_input_handler.unget_range(4);
-                return m_last_token_type = scan_string();
-            }
-        }
-        case 'N':
-        case 'n': {
-            // YAML specifies that these words and a tilde represent a null value.
-            // Tildes are already checked above, so no check is needed here.
-            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
-            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
-            if (ret == end_of_input)
-            {
-                return m_last_token_type = scan_string();
-            }
-
-            try
-            {
-                // try convert to a null value.
-                from_string(m_value_buffer, type_tag<std::nullptr_t> {});
-                m_input_handler.get_next();
-                return m_last_token_type = lexical_token_t::NULL_VALUE;
-            }
-            catch (const fkyaml::exception& /*unused*/)
-            {
-                // revert change in the position to the one before comparison above.
-                m_input_handler.unget_range(3);
-                return m_last_token_type = scan_string();
-            }
-        }
-        case 'T':
-        case 't': {
-            // YAML specifies that only these words represent the boolean value `true`.
-            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
-            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
-            if (ret == end_of_input)
-            {
-                return m_last_token_type = scan_string();
-            }
-
-            try
-            {
-                // try convert to a boolean true value.
-                m_boolean_val = from_string(m_value_buffer, type_tag<boolean_type> {});
-                m_input_handler.get_next();
-                return m_last_token_type = lexical_token_t::BOOLEAN_VALUE;
-            }
-            catch (const fkyaml::exception& /*unused*/)
-            {
-                // revert change in the position to the one before comparison above.
-                m_input_handler.unget_range(3);
-                return m_last_token_type = scan_string();
-            }
-        }
-        default:
-            return m_last_token_type = scan_string();
-        }
+        m_tag.clear();
+        return m_last_token_type = get_next_token_internal(desired_token_t::UNDEFINED);
     }
 
     /// @brief Get the beginning position of a last token.
@@ -439,6 +171,11 @@ public:
         return m_value_buffer;
     }
 
+    const string_type& get_tag() const noexcept
+    {
+        return m_tag;
+    }
+
     /// @brief Get the YAML version specification.
     /// @return const string_type& A YAML version specification.
     const string_type& get_yaml_version() const
@@ -450,6 +187,387 @@ public:
     }
 
 private:
+    /// @brief concrete implementation of get_next_token() with an expected token type (if such a type exists).
+    /// @param desired_type an expected token type deduced from the last call of this method.
+    /// @return lexical_token_t The next lexical token type.
+    lexical_token_t get_next_token_internal(desired_token_t desired_type)
+    {
+        skip_white_spaces();
+
+        char_int_type current = m_input_handler.get_current();
+        m_last_token_begin_pos = m_input_handler.get_cur_pos_in_line();
+
+        switch (desired_type)
+        {
+        case desired_token_t::INTEGER_VALUE: {
+            lexical_token_t ret = scan_number();
+            if (ret != lexical_token_t::INTEGER_VALUE)
+            {
+                emit_error("integer value is expected.");
+            }
+            return ret;
+        }
+        case desired_token_t::FLOAT_NUMBER_VALUE: {
+            lexical_token_t ret = scan_number();
+            if (ret != lexical_token_t::FLOAT_NUMBER_VALUE)
+            {
+                emit_error("floating point value is expected.");
+            }
+            return ret;
+        }
+        case desired_token_t::STRING_VALUE:
+            return scan_string();
+        default:
+            break;
+        }
+
+        if (0x00 <= current && current <= 0x7F && isdigit(current))
+        {
+            return scan_number();
+        }
+
+        switch (current)
+        {
+        case end_of_input: // end of input buffer
+            return lexical_token_t::END_OF_BUFFER;
+        case '?':
+            switch (m_input_handler.get_next())
+            {
+            case ' ':
+                return lexical_token_t::EXPLICIT_KEY_PREFIX;
+            default:
+                m_value_buffer = "?";
+                return scan_string(false);
+            }
+        case ':': // key separater
+            switch (m_input_handler.get_next())
+            {
+            case ' ':
+                break;
+            case '\r': {
+                char_int_type next = m_input_handler.get_next();
+                if (next == '\n')
+                {
+                    m_input_handler.get_next();
+                }
+                return lexical_token_t::MAPPING_BLOCK_PREFIX;
+            }
+            case '\n':
+                m_input_handler.get_next();
+                return lexical_token_t::MAPPING_BLOCK_PREFIX;
+            default:
+                emit_error("Half-width spaces or newline codes are required after a key separater(:).");
+            }
+            m_input_handler.get_next();
+            return lexical_token_t::KEY_SEPARATOR;
+        case ',': // value separater
+            m_input_handler.get_next();
+            return lexical_token_t::VALUE_SEPARATOR;
+        case '&': { // anchor prefix
+            m_value_buffer.clear();
+            while (true)
+            {
+                char_int_type next = m_input_handler.get_next();
+                if (next == end_of_input || next == '\r' || next == '\n')
+                {
+                    emit_error("An anchor label must be followed by some value.");
+                }
+                if (next == ' ')
+                {
+                    m_input_handler.get_next();
+                    break;
+                }
+                m_value_buffer.push_back(char_traits_type::to_char_type(next));
+            }
+            return lexical_token_t::ANCHOR_PREFIX;
+        }
+        case '*': { // alias prefix
+            m_value_buffer.clear();
+            while (true)
+            {
+                char_int_type next = m_input_handler.get_next();
+                if (next == ' ' || next == '\r' || next == '\n' || next == end_of_input)
+                {
+                    if (m_value_buffer.empty())
+                    {
+                        emit_error("An alias prefix must be followed by some anchor name.");
+                    }
+                    m_input_handler.get_next();
+                    break;
+                }
+                m_value_buffer.push_back(char_traits_type::to_char_type(next));
+            }
+            return lexical_token_t::ALIAS_PREFIX;
+        }
+        case '#': // comment prefix
+            scan_comment();
+            return lexical_token_t::COMMENT_PREFIX;
+        case '%': // directive prefix
+            return scan_directive();
+        case '-': {
+            char_int_type next = m_input_handler.get_next();
+            if (next == ' ')
+            {
+                // Move a cursor to the beginning of the next token.
+                m_input_handler.get_next();
+                return lexical_token_t::SEQUENCE_BLOCK_PREFIX;
+            }
+
+            m_input_handler.unget();
+            if (std::isdigit(next))
+            {
+                return scan_number();
+            }
+
+            char_int_type ret = m_input_handler.get_range(3, m_value_buffer);
+            if (ret != end_of_input)
+            {
+                if (m_value_buffer == "---")
+                {
+                    m_input_handler.get_next();
+                    return lexical_token_t::END_OF_DIRECTIVES;
+                }
+
+                m_input_handler.unget_range(2);
+                ret = m_input_handler.get_range(5, m_value_buffer);
+                if (ret != end_of_input)
+                {
+                    try
+                    {
+                        // try convert to the negative infinite value.
+                        m_float_val = from_string(m_value_buffer, type_tag<float_number_type> {});
+                        m_input_handler.get_next();
+                        return lexical_token_t::FLOAT_NUMBER_VALUE;
+                    }
+                    catch (const fkyaml::exception& /*unused*/)
+                    {
+                        m_input_handler.unget_range(4);
+                    }
+                }
+            }
+
+            m_input_handler.get_next();
+            m_value_buffer = "-";
+            return scan_string(false);
+        }
+        case '[': // sequence flow begin
+            m_input_handler.get_next();
+            return lexical_token_t::SEQUENCE_FLOW_BEGIN;
+        case ']': // sequence flow end
+            m_input_handler.get_next();
+            return lexical_token_t::SEQUENCE_FLOW_END;
+        case '{': // mapping flow begin
+            m_input_handler.get_next();
+            return lexical_token_t::MAPPING_FLOW_BEGIN;
+        case '}': // mapping flow end
+            m_input_handler.get_next();
+            return lexical_token_t::MAPPING_FLOW_END;
+        case '@':
+            emit_error("Any token cannot start with at(@). It is a reserved indicator for YAML.");
+        case '`':
+            emit_error("Any token cannot start with grave accent(`). It is a reserved indicator for YAML.");
+        case '\"':
+        case '\'':
+            return scan_string();
+        case '~':
+            m_value_buffer = char_traits_type::to_char_type(current);
+            return lexical_token_t::NULL_VALUE;
+        case '+':
+            return scan_number();
+        case '.': {
+            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
+            if (ret != end_of_input)
+            {
+                try
+                {
+                    // try convert to an infinite/nan value.
+                    m_float_val = from_string(m_value_buffer, type_tag<float_number_type> {});
+                    m_input_handler.get_next();
+                    return lexical_token_t::FLOAT_NUMBER_VALUE;
+                }
+                catch (const fkyaml::exception& /*unused*/)
+                {
+                    // revert change in the position to the one before comparison above.
+                    m_input_handler.unget_range(3);
+                    return scan_string();
+                }
+            }
+
+            ret = m_input_handler.get_range(3, m_value_buffer);
+            if (ret != end_of_input)
+            {
+                if (m_value_buffer == "...")
+                {
+                    m_input_handler.get_next();
+                    return lexical_token_t::END_OF_DOCUMENT;
+                }
+
+                // revert change in the position to the one before comparison above.
+                m_input_handler.unget_range(2);
+            }
+
+            return scan_string();
+        }
+        case '|': {
+            chomping_indicator_t chomp_type = chomping_indicator_t::KEEP;
+            std::size_t indent = 0;
+            get_block_style_metadata(chomp_type, indent);
+            return scan_block_style_string_token(block_style_indicator_t::LITERAL, chomp_type, indent);
+        }
+        case '>': {
+            chomping_indicator_t chomp_type = chomping_indicator_t::KEEP;
+            std::size_t indent = 0;
+            get_block_style_metadata(chomp_type, indent);
+            return scan_block_style_string_token(block_style_indicator_t::FOLDED, chomp_type, indent);
+        }
+        case '!': {
+            if (!m_input_handler.test_next_char('!'))
+            {
+                return scan_string();
+            }
+
+            // move the cursor to the next character to "!!";
+            m_input_handler.get_next();
+            m_input_handler.get_next();
+
+            char_int_type ret = m_input_handler.get_range(3, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                m_value_buffer = "!!";
+                return scan_string(false);
+            }
+
+            if (m_value_buffer == "int")
+            {
+                m_tag = "!!int";
+                m_input_handler.get_next();
+                return get_next_token_internal(desired_token_t::INTEGER_VALUE);
+            }
+            if (m_value_buffer == "str")
+            {
+                m_tag = "!!str";
+                m_input_handler.get_next();
+                return get_next_token_internal(desired_token_t::STRING_VALUE);
+            }
+
+            m_input_handler.unget_range(2);
+            ret = m_input_handler.get_range(4, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                m_value_buffer = "!!";
+                return scan_string(false);
+            }
+
+            if (m_value_buffer == "bool")
+            {
+                m_tag = "!!bool";
+                m_input_handler.get_next();
+                return get_next_token_internal(desired_token_t::BOOLEAN_VALUE);
+            }
+            if (m_value_buffer == "null")
+            {
+                m_tag = "!!null";
+                m_input_handler.get_next();
+                return get_next_token_internal(desired_token_t::NULL_VALUE);
+            }
+
+            m_input_handler.unget_range(3);
+            ret = m_input_handler.get_range(5, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                m_value_buffer = "!!";
+                return scan_string(false);
+            }
+
+            if (m_value_buffer == "float")
+            {
+                m_tag = "!!float";
+                m_input_handler.get_next();
+                return get_next_token_internal(desired_token_t::FLOAT_NUMBER_VALUE);
+            }
+
+            // fallback to scanning a string scalar.
+            m_value_buffer = "!!" + m_value_buffer;
+            return scan_string(false);
+        }
+        case 'F':
+        case 'f': {
+            // YAML specifies that only these words represent the boolean value `false`.
+            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
+            char_int_type ret = m_input_handler.get_range(5, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                return scan_string();
+            }
+
+            try
+            {
+                // try convert to a boolean false value.
+                m_boolean_val = from_string(m_value_buffer, type_tag<boolean_type> {});
+                m_input_handler.get_next();
+                return lexical_token_t::BOOLEAN_VALUE;
+            }
+            catch (const fkyaml::exception& /*unused*/)
+            {
+                // revert change in the position to the one before comparison above.
+                m_input_handler.unget_range(4);
+                return scan_string();
+            }
+        }
+        case 'N':
+        case 'n': {
+            // YAML specifies that these words and a tilde represent a null value.
+            // Tildes are already checked above, so no check is needed here.
+            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
+            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                return scan_string();
+            }
+
+            try
+            {
+                // try convert to a null value.
+                from_string(m_value_buffer, type_tag<std::nullptr_t> {});
+                m_input_handler.get_next();
+                return lexical_token_t::NULL_VALUE;
+            }
+            catch (const fkyaml::exception& /*unused*/)
+            {
+                // revert change in the position to the one before comparison above.
+                m_input_handler.unget_range(3);
+                return scan_string();
+            }
+        }
+        case 'T':
+        case 't': {
+            // YAML specifies that only these words represent the boolean value `true`.
+            // See "10.3.2 Tag Resolution" section in https://yaml.org/spec/1.2.2/
+            char_int_type ret = m_input_handler.get_range(4, m_value_buffer);
+            if (ret == end_of_input)
+            {
+                return scan_string();
+            }
+
+            try
+            {
+                // try convert to a boolean true value.
+                m_boolean_val = from_string(m_value_buffer, type_tag<boolean_type> {});
+                m_input_handler.get_next();
+                return lexical_token_t::BOOLEAN_VALUE;
+            }
+            catch (const fkyaml::exception& /*unused*/)
+            {
+                // revert change in the position to the one before comparison above.
+                m_input_handler.unget_range(3);
+                return scan_string();
+            }
+        }
+        default:
+            return scan_string();
+        }
+    }
+
     /// @brief A utility function to convert a hexadecimal character to an integer.
     /// @param source A hexadecimal character ('0'~'9', 'A'~'F', 'a'~'f')
     /// @return char A integer converted from @a source.
@@ -1512,11 +1630,16 @@ private:
     input_handler_type m_input_handler;
     /// A temporal buffer to store a string to be parsed to an actual datum.
     input_string_type m_value_buffer {};
+    /// A temporal buffer to store a UTF-8 encoded char sequence.
     std::array<char, 4> m_encode_buffer {};
+    /// The size of a UTF-8 encoded char sequence.
     std::size_t m_encoded_size {0};
+    /// The beginning position of the last lexical token.
     std::size_t m_last_token_begin_pos {0};
     /// The last found token type.
     lexical_token_t m_last_token_type {lexical_token_t::END_OF_BUFFER};
+    /// A temporal buffer of the last tag name.
+    string_type m_tag {};
     /// A temporal bool holder.
     boolean_type m_boolean_val {false};
     /// A temporal integer holder.

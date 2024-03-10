@@ -136,23 +136,44 @@ private:
             }
             break;
         case node_t::NULL_OBJECT:
+            if (try_append_tag(node, str))
+            {
+                str += " ";
+            }
             to_string(nullptr, m_tmp_str_buff);
             str += m_tmp_str_buff;
             break;
         case node_t::BOOLEAN:
+            if (try_append_tag(node, str))
+            {
+                str += " ";
+            }
             to_string(node.template get_value<typename BasicNodeType::boolean_type>(), m_tmp_str_buff);
             str += m_tmp_str_buff;
             break;
         case node_t::INTEGER:
+            if (try_append_tag(node, str))
+            {
+                str += " ";
+            }
             to_string(node.template get_value<typename BasicNodeType::integer_type>(), m_tmp_str_buff);
             str += m_tmp_str_buff;
             break;
         case node_t::FLOAT_NUMBER:
+            if (try_append_tag(node, str))
+            {
+                str += " ";
+            }
             to_string(node.template get_value<typename BasicNodeType::float_number_type>(), m_tmp_str_buff);
             str += m_tmp_str_buff;
             break;
         case node_t::STRING: {
             using string_type = typename BasicNodeType::string_type;
+
+            if (try_append_tag(node, str))
+            {
+                str += " ";
+            }
 
             // Check if the string value contains a character needed to be escaped on output.
             const string_type& s = node.template get_value_ref<const string_type&>();
@@ -401,6 +422,20 @@ private:
                 str += " ";
             }
             str += "*" + node.get_anchor_name();
+            return true;
+        }
+        return false;
+    }
+
+    /// @brief Append a tag property if it's available. Do nothing otherwise.
+    /// @param[in] node The target node which possibly has a tag name.
+    /// @param[in,out] str A string to hold serialization result.
+    /// @return true if a tag property has been appended, false otherwise.
+    bool try_append_tag(const BasicNodeType& node, std::string& str) const
+    {
+        if (node.has_tag_name())
+        {
+            str += node.get_tag_name();
             return true;
         }
         return false;

@@ -155,6 +155,29 @@ TEST_CASE("SerializerClassTest_SerializeStringNode", "[SerializerClassTest]")
     REQUIRE(serializer.serialize(node_str_pair.first) == node_str_pair.second);
 }
 
+TEST_CASE("SerializerClassTest_SerializeTags", "[SerializerClassTest]")
+{
+    fkyaml::node node = {{"foo", 123}, {nullptr, {true, "bar", 3.14}}};
+    node["foo"].add_tag_name("!!int");
+    node[nullptr][0].add_tag_name("!!bool");
+    node[nullptr][1].add_tag_name("!!str");
+    node[nullptr][2].add_tag_name("!!float");
+    fkyaml::node key = "baz";
+    key.add_tag_name("!!str");
+    node.get_value_ref<fkyaml::node::mapping_type&>().emplace(key, nullptr);
+    node["baz"].add_tag_name("!!null");
+
+    std::string expected = "null:\n"
+                           "  - !!bool true\n"
+                           "  - !!str bar\n"
+                           "  - !!float 3.14\n"
+                           "!!str baz: !!null null\n"
+                           "foo: !!int 123\n";
+
+    fkyaml::detail::basic_serializer<fkyaml::node> serializer;
+    REQUIRE(serializer.serialize(node) == expected);
+}
+
 TEST_CASE("SerializerClassTest_SerializeAnchorNode", "[SerializerClassTest]")
 {
     fkyaml::node node = {{"foo", 123}, {nullptr, {true, "bar", 3.14}}};

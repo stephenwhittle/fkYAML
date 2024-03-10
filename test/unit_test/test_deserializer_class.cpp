@@ -953,6 +953,34 @@ TEST_CASE("DeserializerClassTest_DeserializeBlockMappingTest", "[DeserializerCla
         REQUIRE(root[key][1].is_string());
         REQUIRE(root[key][1].get_value_ref<std::string&>() == "qux");
     }
+
+    SECTION("Input source No.16.")
+    {
+        auto input_adapter = fkyaml::detail::input_adapter("!!str foo: !!str 3.14\n"
+                                                           "!!int 10: !!bool false\n"
+                                                           "!!null null: !!float 3.14");
+
+        REQUIRE_NOTHROW(root = deserializer.deserialize(std::move(input_adapter)));
+
+        REQUIRE(root.is_mapping());
+        REQUIRE(root.size() == 3);
+
+        REQUIRE(root.contains("foo"));
+        REQUIRE(root["foo"].is_string());
+        REQUIRE(root["foo"].get_value_ref<std::string&>() == "3.14");
+        REQUIRE(root["foo"].has_tag_name());
+        REQUIRE(root["foo"].get_tag_name() == "!!str");
+
+        REQUIRE(root.contains(10));
+        REQUIRE(root[10].is_boolean());
+        REQUIRE(root[10].get_value<bool>() == false);
+        REQUIRE(root[10].has_tag_name());
+        REQUIRE(root[10].get_tag_name() == "!!bool");
+
+        REQUIRE(root.contains(nullptr));
+        REQUIRE(root[nullptr].is_float_number());
+        REQUIRE(root[nullptr].get_value<double>() == 3.14);
+    }
 }
 
 TEST_CASE("DeserializerClassTest_DeserializeFlowSequenceTest", "[DeserializerClassTest]")
