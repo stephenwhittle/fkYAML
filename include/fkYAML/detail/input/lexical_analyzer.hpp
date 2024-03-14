@@ -192,7 +192,7 @@ private:
     /// @return lexical_token_t The next lexical token type.
     lexical_token_t get_next_token_internal(desired_token_t desired_type)
     {
-        skip_white_spaces();
+        skip_white_spaces_and_newlines();
 
         char_int_type current = m_input_handler.get_current();
         m_last_token_begin_pos = m_input_handler.get_cur_pos_in_line();
@@ -243,15 +243,29 @@ private:
             switch (m_input_handler.get_next())
             {
             case ' ':
-                break;
-            case '\r': {
-                char_int_type next = m_input_handler.get_next();
-                if (next == '\n')
+                skip_white_spaces_and_comments();
+                current = m_input_handler.get_current();
+                switch (current)
                 {
+                case '\r':
+                    current = m_input_handler.get_next();
+                    if (current != '\n')
+                    {
+                        return lexical_token_t::MAPPING_BLOCK_PREFIX;
+                    }
+                case '\n':
                     m_input_handler.get_next();
+                    return lexical_token_t::MAPPING_BLOCK_PREFIX;
+                default:
+                    return lexical_token_t::KEY_SEPARATOR;
                 }
-                return lexical_token_t::MAPPING_BLOCK_PREFIX;
-            }
+                break;
+            case '\r':
+                current = m_input_handler.get_next();
+                if (current != '\n')
+                {
+                    return lexical_token_t::MAPPING_BLOCK_PREFIX;
+                }
             case '\n':
                 m_input_handler.get_next();
                 return lexical_token_t::MAPPING_BLOCK_PREFIX;
@@ -1576,7 +1590,7 @@ private:
     /// @brief Skip white spaces, tabs and newline codes until any other kind of character is found.
     void skip_white_spaces()
     {
-        while (true)
+        do
         {
             switch (m_input_handler.get_current())
             {
@@ -1588,14 +1602,51 @@ private:
             default:
                 return;
             }
-            m_input_handler.get_next();
         }
+        while (m_input_handler.get_next() != end_of_input);
+    }
+
+    void skip_white_spaces_and_newlines()
+    {
+        do
+        {
+            switch (m_input_handler.get_current())
+            {
+            case ' ':
+            case '\t':
+            case '\r':
+            case '\n':
+                break;
+            default:
+                return;
+            }
+        }
+        while (m_input_handler.get_next() != end_of_input);
+    }
+
+    void skip_white_spaces_and_comments()
+    {
+        do
+        {
+            switch (m_input_handler.get_current())
+            {
+            case ' ':
+            case '\t':
+                break;
+            case '#':
+                scan_comment();
+                break;
+            default:
+                return;
+            }
+        }
+        while (m_input_handler.get_next() != end_of_input);
     }
 
     /// @brief Skip reading in the current line.
     void skip_until_line_end()
     {
-        while (true)
+        do
         {
             switch (m_input_handler.get_current())
             {
@@ -1613,8 +1664,8 @@ private:
             default:
                 break;
             }
-            m_input_handler.get_next();
         }
+        while (m_input_handler.get_next() != end_of_input);
     }
 
     [[noreturn]] void emit_error(const char* msg) const
