@@ -467,6 +467,22 @@ TEST_CASE("DeserializerClassTest_DeserializeBlockSequenceTest", "[DeserializerCl
         REQUIRE(root["test"][0]["item"].is_integer());
         REQUIRE(root["test"][0]["item"].get_value<int>() == 123);
     }
+
+    SECTION("Input source No.9.")
+    {
+        REQUIRE_NOTHROW(
+            root = deserializer.deserialize(fkyaml::detail::input_adapter("foo: # comment\n  - bar\n")));
+
+        REQUIRE(root.is_mapping());
+        REQUIRE(root.size() == 1);
+        REQUIRE(root.contains("foo"));
+
+        REQUIRE(root["foo"].is_sequence());
+        REQUIRE(root["foo"].size() == 1);
+
+        REQUIRE(root["foo"][0].is_string());
+        REQUIRE(root["foo"][0].get_value_ref<std::string&>() == "bar");
+    }
 }
 
 TEST_CASE("DeserializerClassTest_DeserializeBlockMappingTest", "[DeserializerClassTest]")
@@ -967,6 +983,23 @@ TEST_CASE("DeserializerClassTest_DeserializeBlockMappingTest", "[DeserializerCla
 
         REQUIRE(root.contains("Baz[123]"));
         REQUIRE(root["Baz[123]"].get_value<double>() == 3.14);
+    }
+
+    SECTION("Input source No.17.")
+    {
+        REQUIRE_NOTHROW(
+            root = deserializer.deserialize(fkyaml::detail::input_adapter("baz: # comment2\n  qux: 123\n")));
+
+        REQUIRE(root.is_mapping());
+        REQUIRE(root.size() == 1);
+        REQUIRE(root.contains("baz"));
+
+        REQUIRE(root["baz"].is_mapping());
+        REQUIRE(root["baz"].size() == 1);
+        REQUIRE(root["baz"].contains("qux"));
+
+        REQUIRE(root["baz"]["qux"].is_integer());
+        REQUIRE(root["baz"]["qux"].get_value<int>() == 123);
     }
 }
 
